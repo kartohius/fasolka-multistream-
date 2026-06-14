@@ -282,6 +282,7 @@ function vkWsConnect(){
     if(d.type==='STATUS'){
       if(d.status==='connected') setVkStatus(true,'live · реальное время');
       else if(d.status==='reconnecting') setVkStatus(false,'переподключение к VK...');
+      else if(d.status==='offline') setVkStatus(false,'стрим офлайн · чат недоступен');
       else if(d.status==='error') setVkStatus(false,'ошибка: '+(d.message||''));
     }
     if(d.type==='HISTORY'&&Array.isArray(d.messages)) d.messages.forEach(vkRenderMsg);
