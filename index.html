@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fasolka · мультистрим</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0c0e12;--surf:#13161d;--surf2:#1a1e28;
+  --brd:#222733;--brd2:#2e3545;
+  --text:#dde1ec;--muted:#5a6278;--muted2:#8891a8;
+  --vk:#4c75a3;--kick:#53fc18;
+  --accent:#b8ff57;--warn:#f59e0b;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;overflow:hidden}
+
+/* ── TOPBAR ── */
+.topbar{height:48px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--brd);background:var(--surf);flex-shrink:0;z-index:20}
+.logo{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:16px;letter-spacing:-.4px;display:flex;align-items:center;gap:7px;flex-shrink:0}
+.logo-dot{width:7px;height:7px;background:var(--accent);border-radius:50%;animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+.logo em{color:var(--accent);font-style:normal}
+.topbar-sep{width:1px;height:20px;background:var(--brd2);flex-shrink:0}
+.stream-tabs{display:flex;gap:2px;background:var(--bg);border-radius:7px;padding:2px}
+.stab{padding:4px 11px;border-radius:5px;border:none;background:transparent;color:var(--muted2);font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:11px;cursor:pointer;transition:all .14s;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.stab:hover{color:var(--text);background:var(--brd)}
+.stab.on{color:#0c0e12}
+.stab .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+.stab.vk.on{background:var(--vk)}.stab.kick.on{background:var(--kick)}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+.open-btn{padding:4px 10px;border-radius:6px;border:1px solid var(--brd2);background:transparent;color:var(--muted2);font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:11px;cursor:pointer;transition:all .14s;white-space:nowrap;text-decoration:none}
+.open-btn:hover{background:var(--brd);color:var(--text)}
+
+/* ── BODY: плеер слева, 2 чата справа ── */
+.body{
+  display:grid;
+  grid-template-columns:1fr 6px 340px;
+  height:calc(100vh - 48px);
+  overflow:hidden;
+}
+.left-col{display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.player-wrap{background:#000;position:relative;overflow:hidden;flex:1;min-height:0}
+.p-frame{position:absolute;inset:0;width:100%;height:100%;border:none;opacity:0;pointer-events:none;transition:opacity .22s}
+.p-frame.on{opacity:1;pointer-events:auto}
+.ppill{position:absolute;bottom:10px;left:10px;background:rgba(12,14,18,.82);backdrop-filter:blur(6px);border:1px solid var(--brd2);border-radius:20px;padding:3px 10px;font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;pointer-events:none;z-index:5}
+.ppill-dot{width:5px;height:5px;border-radius:50%}
+
+/* Сплиттер */
+.v-drag{background:var(--brd);cursor:col-resize;z-index:15;display:flex;align-items:center;justify-content:center;touch-action:none;transition:background .15s}
+.v-drag:hover,.v-drag.dragging{background:var(--accent)}
+.v-drag::after{content:'⋮';color:var(--brd2);font-size:14px;line-height:1;transition:color .15s}
+.v-drag:hover::after,.v-drag.dragging::after{color:var(--bg)}
+
+/* Правая колонка: 2 чата вертикально */
+.right-col{display:flex;flex-direction:column;overflow:hidden;min-width:0;border-left:1px solid var(--brd)}
+
+/* Горизонтальный разделитель между чатами */
+.h-chat-drag{height:6px;background:var(--brd);cursor:row-resize;flex-shrink:0;display:flex;align-items:center;justify-content:center;touch-action:none;transition:background .15s}
+.h-chat-drag:hover,.h-chat-drag.dragging{background:var(--accent)}
+.h-chat-drag::after{content:'···';color:var(--brd2);font-size:10px;letter-spacing:2px;transition:color .15s}
+.h-chat-drag:hover::after,.h-chat-drag.dragging::after{color:var(--bg)}
+
+/* Панель чата */
+.chat-col{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.chat-head{height:36px;display:flex;align-items:center;gap:6px;padding:0 10px;flex-shrink:0;border-bottom:1px solid var(--brd);background:var(--surf)}
+.chat-head-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;display:flex;align-items:center;gap:6px;flex:1;min-width:0}
+.chat-head-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+.col-open{padding:3px 8px;border-radius:5px;border:1px solid var(--brd2);background:transparent;color:var(--muted2);font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:10px;text-decoration:none;transition:all .14s;white-space:nowrap;flex-shrink:0}
+.col-open:hover{background:var(--brd);color:var(--text)}
+
+/* VK чат */
+.vk-chat-body{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.vk-msgs{flex:1;overflow-y:auto;padding:5px 4px;display:flex;flex-direction:column;gap:1px;min-height:0}
+.vk-msgs::-webkit-scrollbar{width:3px}
+.vk-msgs::-webkit-scrollbar-thumb{background:var(--brd2);border-radius:3px}
+.vmsg{display:flex;gap:6px;padding:3px 5px;border-radius:5px;align-items:flex-start}
+.vmsg:hover{background:rgba(255,255,255,.03)}
+.vavatar{width:18px;height:18px;border-radius:50%;background:rgba(76,117,163,.3);flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;margin-top:2px}
+.vavatar img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.vbody{flex:1;min-width:0}
+.vname{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:10px;color:var(--vk);margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vname.owner{color:var(--accent)}
+.vtext{font-size:11px;color:var(--text);line-height:1.45;word-break:break-word}
+.vtext img{width:16px;height:16px;vertical-align:middle;margin:0 1px}
+
+/* Статусбар VK */
+.vk-bar{height:22px;display:flex;align-items:center;padding:0 8px;border-top:1px solid var(--brd);flex-shrink:0;background:var(--surf);gap:5px}
+.vk-bar-dot{width:5px;height:5px;border-radius:50%;background:var(--brd2);flex-shrink:0;transition:background .3s}
+@keyframes cblink{0%,100%{opacity:1}50%{opacity:.4}}
+.vk-bar-dot.live{background:#22c55e;animation:cblink 2s infinite}
+.vk-bar-dot.err{background:#f87171}
+.vk-bar-txt{font-size:10px;color:var(--muted);font-family:'Space Grotesk',sans-serif;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Поле отправки VK */
+.vk-send{display:flex;gap:4px;padding:5px 6px;border-top:1px solid var(--brd);flex-shrink:0;background:var(--surf)}
+.vk-send-inp{flex:1;background:var(--bg);border:1px solid var(--brd2);border-radius:6px;padding:5px 8px;font-size:11px;color:var(--text);font-family:'Inter',sans-serif;outline:none;transition:border-color .14s;min-width:0}
+.vk-send-inp:focus{border-color:var(--vk)}
+.vk-send-inp::placeholder{color:var(--muted)}
+.vk-send-inp:disabled{opacity:.4;cursor:not-allowed}
+.vk-send-btn{padding:5px 10px;border-radius:6px;border:none;background:var(--vk);color:#fff;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;cursor:pointer;flex-shrink:0;transition:filter .14s}
+.vk-send-btn:hover{filter:brightness(1.15)}
+.vk-send-btn:disabled{opacity:.35;cursor:not-allowed;filter:none}
+
+/* Авторизация VK */
+.vk-auth{display:flex;align-items:center;gap:5px}
+.vk-login-btn{padding:3px 8px;border-radius:5px;border:1px solid rgba(76,117,163,.4);background:rgba(76,117,163,.1);color:#7aaed4;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:10px;cursor:pointer;transition:all .14s;white-space:nowrap}
+.vk-login-btn:hover{background:rgba(76,117,163,.25);color:#fff}
+.vk-user-info{display:none;align-items:center;gap:5px}
+.vk-user-avatar{width:16px;height:16px;border-radius:50%;object-fit:cover}
+.vk-user-name{font-size:10px;font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--muted2);max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vk-logout{background:none;border:none;color:var(--muted);font-size:11px;cursor:pointer;padding:0;line-height:1}
+.vk-logout:hover{color:var(--text)}
+
+/* Kick iframe чат */
+.kick-chat-body{flex:1;overflow:hidden;min-height:0;position:relative}
+.kick-chat-body iframe{width:100%;height:100%;border:none;display:block}
+
+/* Кнопка скролл вниз */
+.scroll-btn{position:absolute;bottom:8px;right:8px;width:24px;height:24px;border-radius:50%;background:var(--surf2);border:1px solid var(--brd2);color:var(--muted2);font-size:12px;cursor:pointer;display:none;align-items:center;justify-content:center;z-index:10;line-height:1}
+.scroll-btn:hover{background:var(--brd2);color:var(--text)}
+.scroll-btn.show{display:flex}
+
+@media(max-width:768px){
+  .body{grid-template-columns:1fr!important;grid-template-rows:35vh 6px 1fr;height:auto;min-height:calc(100vh - 48px)}
+  .v-drag{cursor:row-resize;height:6px}
+  .right-col{border-left:none;border-top:1px solid var(--brd)}
+  .stab .label{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo"><div class="logo-dot"></div><em>fasolka</em>&nbsp;live</div>
+  <div class="topbar-sep"></div>
+  <div class="stream-tabs">
+    <button class="stab vk on" onclick="switchStream('vk',this)"><span class="dot"></span><span class="label">VK Video</span></button>
+    <button class="stab kick" onclick="switchStream('kick',this)"><span class="dot" style="background:var(--kick)"></span><span class="label">Kick</span></button>
+  </div>
+  <div class="topbar-right">
+    <a class="open-btn" href="https://live.vkvideo.ru/fasolka" target="_blank">↗ VK</a>
+    <a class="open-btn" href="https://kick.com/fasollka" target="_blank">↗ Kick</a>
+  </div>
+</div>
+
+<div class="body" id="body">
+
+  <!-- ПЛЕЕР -->
+  <div class="left-col">
+    <div class="player-wrap" id="player-wrap">
+      <iframe id="pf-vk" class="p-frame on"
+        src="https://live.vkvideo.ru/app/embed/fasolka?autoplay=true"
+        allow="autoplay; fullscreen; picture-in-picture; encrypted-media; screen-wake-lock" allowfullscreen></iframe>
+      <iframe id="pf-kick" class="p-frame"
+        src="https://player.kick.com/fasollka?autoplay=true"
+        allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>
+      <div class="ppill">
+        <div class="ppill-dot" id="ppill-dot" style="background:var(--vk)"></div>
+        <span id="ppill-label">VK Video</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- СПЛИТТЕР -->
+  <div class="v-drag" id="v-drag"></div>
+
+  <!-- ПРАВАЯ КОЛОНКА: 2 чата вертикально -->
+  <div class="right-col" id="right-col">
+
+    <!-- VK ЧАТ (верхний) -->
+    <div class="chat-col" id="vk-chat-col" style="flex:1;min-height:80px">
+      <div class="chat-head">
+        <div class="chat-head-title">
+          <div class="chat-head-dot" style="background:var(--vk)"></div>
+          VK Video
+        </div>
+        <div class="vk-auth" id="vk-auth">
+          <div class="vk-user-info" id="vk-user-info">
+            <img class="vk-user-avatar" id="vk-user-avatar" src="" alt="">
+            <span class="vk-user-name" id="vk-user-name"></span>
+            <button class="vk-logout" onclick="vkLogout()" title="Выйти">✕</button>
+          </div>
+          <button class="vk-login-btn" id="vk-login-btn" onclick="vkLogin()">Войти в VK</button>
+        </div>
+        <a class="col-open" href="https://live.vkvideo.ru/fasolka/stream/default/only-chat" target="_blank" style="margin-left:4px">↗</a>
+      </div>
+      <div class="vk-chat-body">
+        <div class="vk-msgs" id="vk-msgs" style="position:relative">
+          <div id="vk-placeholder" style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;padding:16px;text-align:center;color:var(--muted2);font-size:11px;min-height:60px">
+            <div style="width:14px;height:14px;border:2px solid var(--brd2);border-top-color:var(--vk);border-radius:50%;animation:spin .8s linear infinite"></div>
+            Подключение...
+          </div>
+        </div>
+        <button class="scroll-btn" id="vk-scroll-btn" onclick="vkScrollToBottom()">↓</button>
+      </div>
+      <div class="vk-bar">
+        <div class="vk-bar-dot" id="vk-bar-dot"></div>
+        <span class="vk-bar-txt" id="vk-bar-txt">подключение...</span>
+      </div>
+      <div class="vk-send" id="vk-send-row" style="display:none">
+        <input class="vk-send-inp" id="vk-send-inp" placeholder="Написать в VK чат..." maxlength="500">
+        <button class="vk-send-btn" id="vk-send-btn">↑</button>
+      </div>
+    </div>
+
+    <!-- РАЗДЕЛИТЕЛЬ -->
+    <div class="h-chat-drag" id="h-chat-drag"></div>
+
+    <!-- KICK ЧАТ (нижний) -->
+    <div class="chat-col" id="kick-chat-col" style="flex:1;min-height:80px">
+      <div class="chat-head">
+        <div class="chat-head-title">
+          <div class="chat-head-dot" style="background:var(--kick)"></div>
+          Kick
+        </div>
+        <a class="col-open" href="https://kick.com/popout/fasollka/chat" target="_blank">↗</a>
+      </div>
+      <div class="kick-chat-body">
+        <iframe
+          src="https://chat.kick.cx/embed/fasollka"
+          allow="autoplay; encrypted-media"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-storage-access-by-user-activation">
+        </iframe>
+      </div>
+    </div>
+
+  </div><!-- /right-col -->
+
+</div><!-- /body -->
+
+<script>
+/* ══ BACKEND URL ══ */
+const VK_BACKEND = 'https://fasolka-backend-production.up.railway.app';
+const VK_WS_URL  = VK_BACKEND.replace('https://','wss://')+'/ws';
+
+/* ══ STREAM SWITCHER ══ */
+const streamMeta={vk:{color:'var(--vk)',label:'VK Video'},kick:{color:'var(--kick)',label:'Kick'}};
+function switchStream(id,btn){
+  document.querySelectorAll('.p-frame').forEach(f=>f.classList.remove('on'));
+  document.getElementById('pf-'+id).classList.add('on');
+  document.querySelectorAll('.stab').forEach(t=>t.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('ppill-dot').style.background=streamMeta[id].color;
+  document.getElementById('ppill-label').textContent=streamMeta[id].label;
+}
+
+/* ══ VK ЧАТ ЧЕРЕЗ БЭКЕНД ══ */
+let vkWs=null, vkSession=localStorage.getItem('vk_session')||null;
+let vkWsRetry=0, vkWsTimer=null, vkSeenIds=new Set(), vkScrolled=false;
+
+// Проверяем сессию из URL после OAuth
+(function(){
+  const p=new URLSearchParams(location.search);
+  const s=p.get('session');
+  if(s){vkSession=s;localStorage.setItem('vk_session',s);}
+  if(p.get('auth')==='error'){showVkError('Ошибка авторизации VK');}
+  if(s||p.has('auth')) history.replaceState({},'',location.pathname);
+})();
+
+// Инициализация
+if(vkSession) vkLoadProfile();
+vkWsConnect();
+
+// VK WebSocket
+function vkWsConnect(){
+  clearTimeout(vkWsTimer);
+  if(vkWs){try{vkWs.close();}catch(e){}vkWs=null;}
+  setVkStatus(false,'подключение...');
+
+  vkWs=new WebSocket(VK_WS_URL);
+
+  vkWs.onopen=()=>{
+    vkWsRetry=0;
+    setVkStatus(true,'live · реальное время');
+    removePlaceholder();
+  };
+
+  vkWs.onmessage=(e)=>{
+    let d;try{d=JSON.parse(e.data);}catch{return;}
+    if(d.type==='STATUS'){
+      if(d.status==='connected') setVkStatus(true,'live · реальное время');
+      else if(d.status==='reconnecting') setVkStatus(false,'переподключение к VK...');
+      else if(d.status==='error') setVkStatus(false,'ошибка: '+(d.message||''));
+    }
+    if(d.type==='HISTORY'&&Array.isArray(d.messages)) d.messages.forEach(vkRenderMsg);
+    if(d.type==='MESSAGE'&&d.message) vkRenderMsg(d.message);
+  };
+
+  vkWs.onclose=()=>{
+    setVkStatus(false,'переподключение...');
+    const delay=Math.min(2000*Math.pow(1.5,Math.min(vkWsRetry,7)),30000);
+    vkWsTimer=setTimeout(vkWsConnect,delay);
+    vkWsRetry++;
+  };
+  vkWs.onerror=()=>{};
+}
+
+// Рендер сообщения VK
+function vkRenderMsg(msg){
+  if(!msg||!msg.id) return;
+  if(vkSeenIds.has(msg.id)) return;
+  vkSeenIds.add(msg.id);
+
+  removePlaceholder();
+
+  const msgs=document.getElementById('vk-msgs');
+  const atBot=!vkScrolled&&(msgs.scrollHeight-msgs.scrollTop-msgs.clientHeight<80);
+
+  const avHTML=msg.avatar
+    ?`<img src="${escAttr(msg.avatar)}" alt="" onerror="this.style.display='none'">`
+    :esc((msg.name||'?').charAt(0).toUpperCase());
+
+  // Собираем HTML: смайлы уже обработаны на сервере
+  let textHTML=esc(msg.text||'');
+  (msg.smiles||[]).forEach(s=>{
+    if(s.name&&s.url){
+      textHTML=textHTML.replace(
+        new RegExp(':'+s.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+':','g'),
+        `<img src="${escAttr(s.url)}" title="${escAttr(s.name)}">`
+      );
+    }
+  });
+
+  const el=document.createElement('div');
+  el.className='vmsg';
+  el.innerHTML=`
+    <div class="vavatar">${avHTML}</div>
+    <div class="vbody">
+      <div class="vname${msg.isOwner?' owner':''}">${esc(msg.name||'Аноним')}</div>
+      <div class="vtext">${textHTML}</div>
+    </div>`;
+  msgs.appendChild(el);
+  while(msgs.childElementCount>300) msgs.removeChild(msgs.firstElementChild);
+  if(atBot) msgs.scrollTop=msgs.scrollHeight;
+}
+
+function removePlaceholder(){
+  const ph=document.getElementById('vk-placeholder');
+  if(ph) ph.remove();
+}
+
+// Скролл VK
+function vkScrollToBottom(){
+  const msgs=document.getElementById('vk-msgs');
+  msgs.scrollTop=msgs.scrollHeight;
+  vkScrolled=false;
+  document.getElementById('vk-scroll-btn').classList.remove('show');
+}
+
+// VK OAuth
+function vkLogin(){ window.location.href=VK_BACKEND+'/auth/login'; }
+
+async function vkLogout(){
+  if(vkSession) fetch(VK_BACKEND+'/auth/logout',{method:'POST',headers:{'x-session-id':vkSession}}).catch(()=>{});
+  vkSession=null; localStorage.removeItem('vk_session');
+  document.getElementById('vk-user-info').style.display='none';
+  document.getElementById('vk-login-btn').style.display='';
+  document.getElementById('vk-send-row').style.display='none';
+}
+
+async function vkLoadProfile(){
+  try{
+    const r=await fetch(VK_BACKEND+'/auth/me',{headers:{'x-session-id':vkSession}});
+    if(!r.ok){vkSession=null;localStorage.removeItem('vk_session');return;}
+    const p=await r.json();
+    document.getElementById('vk-user-info').style.display='flex';
+    document.getElementById('vk-login-btn').style.display='none';
+    document.getElementById('vk-user-name').textContent=p.displayName||'';
+    const av=document.getElementById('vk-user-avatar');
+    if(p.avatarUrl){av.src=p.avatarUrl;}else{av.style.display='none';}
+    document.getElementById('vk-send-row').style.display='flex';
+  }catch(e){vkSession=null;localStorage.removeItem('vk_session');}
+}
+
+// Отправка VK
+async function vkSend(){
+  const inp=document.getElementById('vk-send-inp');
+  const text=(inp?.value||'').trim();
+  if(!text||!vkSession) return;
+  inp.value=''; inp.focus();
+  try{
+    const r=await fetch(VK_BACKEND+'/chat/send',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-session-id':vkSession},
+      body:JSON.stringify({text}),
+    });
+    if(r.status===401) vkLogout();
+  }catch(e){}
+}
+
+// VK статусбар
+function setVkStatus(live,txt){
+  const dot=document.getElementById('vk-bar-dot');
+  const lbl=document.getElementById('vk-bar-txt');
+  if(dot) dot.className='vk-bar-dot'+(live?' live':'');
+  if(lbl) lbl.textContent=txt;
+}
+function showVkError(msg){
+  setVkStatus(false,msg);
+  const dot=document.getElementById('vk-bar-dot');
+  if(dot) dot.className='vk-bar-dot err';
+}
+
+// Утилиты
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function escAttr(s){return String(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+// DOMContentLoaded
+document.addEventListener('DOMContentLoaded',()=>{
+  // VK send
+  document.getElementById('vk-send-inp')?.addEventListener('keydown',e=>{
+    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();vkSend();}
+  });
+  document.getElementById('vk-send-btn')?.addEventListener('click',vkSend);
+
+  // VK scroll detection
+  const vkMsgs=document.getElementById('vk-msgs');
+  const vkScrollBtn=document.getElementById('vk-scroll-btn');
+  vkMsgs?.addEventListener('scroll',()=>{
+    const atBot=vkMsgs.scrollHeight-vkMsgs.scrollTop-vkMsgs.clientHeight<60;
+    vkScrolled=!atBot;
+    vkScrollBtn?.classList.toggle('show',vkScrolled);
+  },{passive:true});
+});
+
+/* ══ ВЕРТИКАЛЬНЫЙ СПЛИТТЕР (плеер ↔ чаты) ══ */
+(function(){
+  const body=document.getElementById('body');
+  const drag=document.getElementById('v-drag');
+  const DRAG_W=6, MIN_CHAT=220, MIN_PLAYER=300;
+  let chatW=Math.min(360,Math.max(MIN_CHAT,Math.round(window.innerWidth*0.28)));
+  applyW(chatW);
+
+  function applyW(w){
+    chatW=Math.max(MIN_CHAT,Math.min(window.innerWidth-MIN_PLAYER-DRAG_W,w));
+    body.style.gridTemplateColumns=`1fr ${DRAG_W}px ${chatW}px`;
+  }
+
+  let active=false,startX=0,startW=0,lastX=0,raf=null;
+  drag.addEventListener('mousedown',e=>{active=true;startX=e.clientX;startW=chatW;drag.classList.add('dragging');document.body.style.cursor='col-resize';document.body.style.userSelect='none';e.preventDefault();});
+  document.addEventListener('mousemove',e=>{
+    if(!active)return; lastX=e.clientX;
+    if(raf)return;
+    raf=requestAnimationFrame(()=>{raf=null;applyW(startW-(lastX-startX));});
+  },{passive:true});
+  document.addEventListener('mouseup',()=>{if(!active)return;active=false;drag.classList.remove('dragging');document.body.style.cursor='';document.body.style.userSelect='';});
+  drag.addEventListener('touchstart',e=>{active=true;startX=e.touches[0].clientX;startW=chatW;e.preventDefault();},{passive:false});
+  document.addEventListener('touchmove',e=>{if(!active)return;lastX=e.touches[0].clientX;if(raf)return;raf=requestAnimationFrame(()=>{raf=null;applyW(startW-(lastX-startX));});},{passive:true});
+  document.addEventListener('touchend',()=>{active=false;});
+  window.addEventListener('resize',()=>applyW(chatW),{passive:true});
+})();
+
+/* ══ ГОРИЗОНТАЛЬНЫЙ СПЛИТТЕР (VK чат ↔ Kick чат) ══ */
+(function(){
+  const drag=document.getElementById('h-chat-drag');
+  const vkCol=document.getElementById('vk-chat-col');
+  const rcol=document.getElementById('right-col');
+  const MIN_H=80;
+  let active=false,startY=0,startH=0,totalH=0,lastY=0,raf=null;
+
+  drag.addEventListener('mousedown',e=>{
+    active=true;startY=e.clientY;startH=vkCol.offsetHeight;
+    totalH=rcol.offsetHeight;
+    drag.classList.add('dragging');
+    document.body.style.cursor='row-resize';
+    document.body.style.userSelect='none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!active)return; lastY=e.clientY;
+    if(raf)return;
+    raf=requestAnimationFrame(()=>{
+      raf=null;
+      const next=Math.max(MIN_H,Math.min(totalH-MIN_H-6,startH+(lastY-startY)));
+      vkCol.style.flex='none';
+      vkCol.style.height=next+'px';
+    });
+  },{passive:true});
+  document.addEventListener('mouseup',()=>{
+    if(!active)return;active=false;
+    drag.classList.remove('dragging');
+    document.body.style.cursor='';document.body.style.userSelect='';
+  });
+  drag.addEventListener('touchstart',e=>{active=true;startY=e.touches[0].clientY;startH=vkCol.offsetHeight;totalH=rcol.offsetHeight;e.preventDefault();},{passive:false});
+  document.addEventListener('touchmove',e=>{
+    if(!active)return;lastY=e.touches[0].clientY;
+    if(raf)return;
+    raf=requestAnimationFrame(()=>{
+      raf=null;
+      const next=Math.max(MIN_H,Math.min(totalH-MIN_H-6,startH+(lastY-startY)));
+      vkCol.style.flex='none';vkCol.style.height=next+'px';
+    });
+  },{passive:true});
+  document.addEventListener('touchend',()=>{active=false;});
+})();
+
+/* ══ VK PLAYER FALLBACK ══ */
+setTimeout(()=>{
+  try{
+    const doc=document.getElementById('pf-vk').contentDocument;
+    if(doc&&doc.body&&doc.body.children.length===0){
+      document.getElementById('pf-vk').style.opacity='0.3';
+    }
+  }catch(e){}
+},3000);
+
+/* ══ CSS animations ══ */
+const s=document.createElement('style');
+s.textContent='@keyframes spin{to{transform:rotate(360deg)}}';
+document.head.appendChild(s);
+</script>
+</body>
+</html>
