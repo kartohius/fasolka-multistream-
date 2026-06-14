@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fasolka · мультистрим</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0c0e12;--surf:#13161d;--surf2:#1a1e28;
+  --brd:#222733;--brd2:#2e3545;
+  --text:#dde1ec;--muted:#5a6278;--muted2:#8891a8;
+  --vk:#4c75a3;--kick:#53fc18;
+  --accent:#b8ff57;--warn:#f59e0b;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;overflow:hidden}
+
+/* ── TOPBAR ── */
+.topbar{height:48px;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--brd);background:var(--surf);flex-shrink:0;z-index:20}
+.logo{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:16px;letter-spacing:-.4px;display:flex;align-items:center;gap:7px;flex-shrink:0}
+.logo-dot{width:7px;height:7px;background:var(--accent);border-radius:50%;animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+.logo em{color:var(--accent);font-style:normal}
+.topbar-sep{width:1px;height:20px;background:var(--brd2);flex-shrink:0}
+.stream-tabs{display:flex;gap:2px;background:var(--bg);border-radius:7px;padding:2px}
+.stab{padding:4px 11px;border-radius:5px;border:none;background:transparent;color:var(--muted2);font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:11px;cursor:pointer;transition:all .14s;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.stab:hover{color:var(--text);background:var(--brd)}
+.stab.on{color:#0c0e12}
+.stab .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+.stab.vk.on{background:var(--vk)}.stab.kick.on{background:var(--kick)}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+.open-btn{padding:4px 10px;border-radius:6px;border:1px solid var(--brd2);background:transparent;color:var(--muted2);font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:11px;cursor:pointer;transition:all .14s;white-space:nowrap;text-decoration:none}
+.open-btn:hover{background:var(--brd);color:var(--text)}
+
+/* ── BODY — горизонтальный layout ── */
+.body{
+  display:grid;
+  /* левая колонка (плеер+чат по вертикали) и правая (чат) задаются через JS */
+  grid-template-columns:1fr 6px 320px;
+  height:calc(100vh - 48px);
+  overflow:hidden;
+}
+
+/* Левая часть: плеер сверху + чат-опционально снизу */
+.left-col{
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  min-width:0;
+}
+
+/* Плеер — занимает всю левую колонку */
+.player-wrap{
+  background:#000;
+  position:relative;
+  overflow:hidden;
+  flex:1; /* растягивается на всё доступное */
+  min-height:0;
+}
+.p-frame{position:absolute;inset:0;width:100%;height:100%;border:none;opacity:0;pointer-events:none;transition:opacity .22s}
+.p-frame.on{opacity:1;pointer-events:auto}
+.ppill{position:absolute;bottom:10px;left:10px;background:rgba(12,14,18,.82);backdrop-filter:blur(6px);border:1px solid var(--brd2);border-radius:20px;padding:3px 10px;font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:600;display:flex;align-items:center;gap:5px;pointer-events:none;z-index:5}
+.ppill-dot{width:5px;height:5px;border-radius:50%}
+
+/* Вертикальный сплиттер между плеером и чатом */
+.v-drag{
+  background:var(--brd);
+  cursor:col-resize;
+  z-index:15;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  touch-action:none;
+  will-change:auto; /* браузер не тратит GPU на статичный элемент */
+  transition:background .15s;
+}
+.v-drag:hover,.v-drag.dragging{background:var(--accent)}
+.v-drag::after{content:'⋮';color:var(--brd2);font-size:14px;line-height:1;transition:color .15s}
+.v-drag:hover::after,.v-drag.dragging::after{color:var(--bg)}
+
+/* ── ЕДИНЫЙ ЧАТ ── */
+.chat-panel{display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0;border-left:1px solid var(--brd)}
+.chat-head{height:36px;display:flex;align-items:center;gap:6px;padding:0 10px;flex-shrink:0;border-bottom:1px solid var(--brd);background:var(--surf)}
+.chat-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;letter-spacing:.3px;display:flex;align-items:center;gap:6px;flex:1;min-width:0}
+
+/* фильтры */
+.chat-filters{display:flex;gap:3px;margin-left:auto;align-items:center}
+.cf{padding:2px 8px;border-radius:4px;border:1px solid transparent;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:9px;cursor:pointer;transition:all .14s;background:transparent;letter-spacing:.3px}
+.cf.all{color:var(--muted2);border-color:var(--brd2)}
+.cf.all.on,.cf.all:hover{background:var(--brd2);color:var(--text)}
+.cf.f-vk{color:var(--vk)}
+.cf.f-vk.on,.cf.f-vk:hover{background:rgba(76,117,163,.2);border-color:var(--vk)}
+.cf.f-kick{color:var(--kick)}
+.cf.f-kick.on,.cf.f-kick:hover{background:rgba(83,252,24,.12);border-color:var(--kick)}
+
+/* кнопки открытия чата */
+.chat-open-btn{display:inline-flex;align-items:center;gap:2px;padding:2px 6px;border-radius:4px;border:1px solid var(--brd2);background:transparent;color:var(--muted2);font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:9px;text-decoration:none;transition:all .14s;white-space:nowrap}
+.chat-open-btn:hover{background:var(--brd);color:var(--text)}
+
+/* подключение */
+.chat-setup{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px;text-align:center}
+.setup-title{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:14px;color:var(--text)}
+.setup-steps{font-size:11px;color:var(--muted2);line-height:1.8;text-align:left;max-width:280px}
+.setup-steps b{color:var(--accent)}
+.setup-steps a{color:var(--accent);text-decoration:none}
+.setup-steps a:hover{text-decoration:underline}
+.setup-inp{width:100%;max-width:280px;padding:8px 12px;border-radius:8px;border:1px solid var(--brd2);background:var(--bg);color:var(--text);font-size:12px;font-family:monospace;outline:none;text-align:center;transition:border-color .14s}
+.setup-inp:focus{border-color:var(--accent)}
+.setup-inp::placeholder{color:var(--muted)}
+.setup-row{display:flex;gap:8px;width:100%;max-width:280px}
+.setup-btn{flex:1;padding:8px;border-radius:8px;border:none;background:var(--accent);color:#0c0e12;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12px;cursor:pointer;transition:filter .14s}
+.setup-btn:hover{filter:brightness(.9)}
+.setup-note{max-width:280px;padding:10px 12px;border-radius:8px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.2);font-size:11px;color:#fbbf24;line-height:1.6;text-align:left}
+.setup-note b{font-weight:700;display:block;margin-bottom:2px}
+
+/* сообщения */
+.chat-body{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.chat-msgs{flex:1;overflow-y:auto;padding:5px 4px;display:flex;flex-direction:column;gap:1px;min-height:0}
+.chat-msgs::-webkit-scrollbar{width:3px}
+.chat-msgs::-webkit-scrollbar-thumb{background:var(--brd2);border-radius:3px}
+.cmsg{display:flex;gap:6px;padding:3px 5px;border-radius:5px;align-items:flex-start;border-left:2px solid transparent}
+.cmsg:hover{background:rgba(255,255,255,.03)}
+.cmsg.p-vk{border-left-color:var(--vk)}
+.cmsg.p-kick{border-left-color:var(--kick)}
+.cmsg.hidden{display:none}
+.cavatar{width:18px;height:18px;border-radius:50%;flex-shrink:0;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:#fff;margin-top:2px;flex-shrink:0}
+.cavatar img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+.cbody{flex:1;min-width:0}
+.cmeta{display:flex;align-items:baseline;gap:4px;margin-bottom:1px;min-width:0}
+.cname{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cbadge{font-size:9px;font-family:'Space Grotesk',sans-serif;font-weight:600;opacity:.55;flex-shrink:0;white-space:nowrap}
+.ctext{font-size:11px;color:var(--text);line-height:1.45;word-break:break-word}
+.ctext img{width:16px;height:16px;vertical-align:middle;margin:0 1px}
+.cdonation{font-size:10px;font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--warn);margin-top:2px}
+
+/* статусбар */
+.chat-bar{height:24px;display:flex;align-items:center;padding:0 8px;border-top:1px solid var(--brd);flex-shrink:0;background:var(--surf);gap:6px}
+.cbar-dot{width:5px;height:5px;border-radius:50%;background:var(--brd2);flex-shrink:0;transition:background .3s}
+@keyframes cblink{0%,100%{opacity:1}50%{opacity:.4}}
+.cbar-dot.live{background:#22c55e;animation:cblink 2s infinite}
+.cbar-txt{font-size:10px;color:var(--muted);font-family:'Space Grotesk',sans-serif;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cbar-cnt{font-size:10px;font-family:'Space Grotesk',sans-serif;font-weight:700;display:flex;align-items:center;gap:6px;flex-shrink:0}
+.cbar-c{padding:1px 5px;border-radius:3px;font-size:9px}
+.cbar-c.vk{background:rgba(76,117,163,.2);color:#7aaed4}
+.cbar-c.kick{background:rgba(83,252,24,.12);color:var(--kick)}
+.cbar-reset{background:none;border:none;color:var(--muted);font-size:10px;cursor:pointer;padding:0 2px;flex-shrink:0}
+.cbar-reset:hover{color:var(--muted2)}
+
+/* кнопка «вниз» */
+.scroll-btn{position:absolute;bottom:96px;right:8px;width:26px;height:26px;border-radius:50%;background:var(--surf2);border:1px solid var(--brd2);color:var(--muted2);font-size:13px;cursor:pointer;display:none;align-items:center;justify-content:center;z-index:10;transition:all .15s;line-height:1}
+.scroll-btn:hover{background:var(--brd2);color:var(--text)}
+.scroll-btn.show{display:flex}
+
+/* строка отправки */
+.send-row{display:flex;gap:4px;padding:5px 6px;border-top:1px solid var(--brd);flex-shrink:0;background:var(--surf)}
+.send-sel{padding:4px 6px;border-radius:6px;border:1px solid var(--brd2);background:var(--bg);color:var(--muted2);font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:10px;outline:none;cursor:pointer;flex-shrink:0}
+.send-sel:focus{border-color:var(--accent)}
+.send-inp{flex:1;background:var(--bg);border:1px solid var(--brd2);border-radius:6px;padding:5px 8px;font-size:11px;color:var(--text);font-family:'Inter',sans-serif;outline:none;transition:border-color .14s;min-width:0}
+.send-inp:focus{border-color:var(--accent)}
+.send-inp::placeholder{color:var(--muted)}
+.send-inp:disabled{opacity:.4;cursor:not-allowed}
+.send-btn{padding:5px 10px;border-radius:6px;border:none;background:var(--accent);color:#0c0e12;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:11px;cursor:pointer;flex-shrink:0;transition:filter .14s}
+.send-btn:hover{filter:brightness(.9)}
+.send-btn:disabled{opacity:.35;cursor:not-allowed;filter:none}
+@media(max-width:680px){
+  .body{grid-template-columns:1fr!important;grid-template-rows:40vh 6px 1fr;height:auto;min-height:calc(100vh - 48px)}
+  .v-drag{cursor:row-resize;width:auto;height:6px}
+  .chat-panel{border-left:none;border-top:1px solid var(--brd)}
+  .stab .label{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo"><div class="logo-dot"></div><em>fasolka</em>&nbsp;live</div>
+  <div class="topbar-sep"></div>
+  <div class="stream-tabs">
+    <button class="stab vk on" onclick="switchStream('vk',this)"><span class="dot"></span><span class="label">VK Video</span></button>
+    <button class="stab kick" onclick="switchStream('kick',this)"><span class="dot" style="background:var(--kick)"></span><span class="label">Kick</span></button>
+  </div>
+  <div class="topbar-right">
+    <a class="open-btn" href="https://live.vkvideo.ru/fasolka" target="_blank">↗ VK</a>
+    <a class="open-btn" href="https://kick.com/fasollka" target="_blank">↗ Kick</a>
+  </div>
+</div>
+
+<div class="body" id="body">
+
+  <!-- Левая колонка: плеер -->
+  <div class="left-col">
+    <div class="player-wrap" id="player-wrap">
+      <iframe id="pf-vk" class="p-frame on"
+        src="https://live.vkvideo.ru/app/embed/fasolka?autoplay=true"
+        allow="autoplay; fullscreen; picture-in-picture; encrypted-media; screen-wake-lock" allowfullscreen
+        onerror="vkPlayerFallback()"></iframe>
+      <!-- Fallback если embed не работает (file:// или блокировка) -->
+      <div id="vk-player-fb" style="display:none;position:absolute;inset:0;background:#0c0e12;align-items:center;justify-content:center;flex-direction:column;gap:12px;z-index:2">
+        <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:13px;color:#dde1ec">VK Video</div>
+        <div style="font-size:11px;color:#5a6278;text-align:center;max-width:220px;line-height:1.6">
+          Embed работает только при открытии через HTTP.<br>
+          Если файл открыт локально — запусти<br>
+          <code style="background:#1a1e28;padding:2px 6px;border-radius:4px;font-size:10px">python -m http.server 8080</code>
+        </div>
+        <a href="https://live.vkvideo.ru/fasolka" target="_blank"
+          style="padding:7px 16px;border-radius:7px;background:#4c75a3;color:#fff;font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:12px;text-decoration:none">
+          ↗ Открыть на VK
+        </a>
+      </div>
+      <iframe id="pf-kick" class="p-frame"
+        src="https://player.kick.com/fasollka?autoplay=true"
+        allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe>
+      <div class="ppill">
+        <div class="ppill-dot" id="ppill-dot" style="background:var(--vk)"></div>
+        <span id="ppill-label">VK Video</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Вертикальный сплиттер -->
+  <div class="v-drag" id="v-drag"></div>
+
+  <!-- Правая колонка: чат -->
+  <div class="chat-panel">
+    <div class="chat-head">
+      <div class="chat-title">
+        <div class="col-dot" style="background:var(--accent)"></div>
+        Чат
+      </div>
+      <div class="chat-filters">
+        <button class="cf all on" onclick="setFilter('all',this)">ВСЕ</button>
+        <button class="cf f-vk"   onclick="setFilter('vk',this)">VK</button>
+        <button class="cf f-kick" onclick="setFilter('kick',this)">Kick</button>
+      </div>
+      <div style="display:flex;gap:3px;margin-left:6px;padding-left:6px;border-left:1px solid var(--brd2)">
+        <a class="chat-open-btn" href="https://live.vkvideo.ru/fasolka/stream/default/only-chat" target="_blank" title="Открыть чат VK Video">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M13.162 18.994c.609 0 .877-.37.869-.928-.031-1.76.813-2.619 2.016-1.414l.028.025c1.209 1.228 1.459 2.317 2.946 2.317h2.679c.789 0 1.3-.21 1.3-.787 0-.317-.184-.704-.573-1.148-.76-.853-2.02-1.978-2.02-1.978s-.686-.573-.447-.978l.022-.037c.227-.381 1.648-2.019 2.27-2.831.689-.896 1.303-1.894 1.303-2.494 0-.557-.444-.841-1.089-.841h-3.264c-.595 0-.862.311-1.069.77 0 0-.94 2.229-2.154 3.776-.461.567-.742.748-1.02.748-.14 0-.337-.181-.337-.748V7.99c0-.581-.17-.87-.662-.87H9.652c-.37 0-.591.272-.591.529 0 .555.83.684.916 2.244v3.39c0 .738-.133.872-.416.872-.742 0-2.546-2.617-3.621-5.512-.21-.602-.422-.841-1.02-.841H1.854c-.667 0-.8.311-.8.654 0 .614.742 3.656 3.467 7.682C6.487 19.105 9.05 20.5 11.394 20.5c1.372 0 1.768-.308 1.768-.84v-1.666z"/></svg>
+          ↗
+        </a>
+        <a class="chat-open-btn" href="https://kick.com/popout/fasollka/chat" target="_blank" title="Открыть чат Kick">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h3v7l5-7h4l-5.5 7.5L15 21h-4l-4-6v6H3V3zm15 0h3v18h-3V3z"/></svg>
+          ↗
+        </a>
+      </div>
+      <!-- VK авторизация -->
+      <div id="vk-auth-area" style="display:flex;align-items:center;gap:5px;margin-left:6px;padding-left:6px;border-left:1px solid var(--brd2)">
+        <div id="vk-user-info" style="display:none;align-items:center;gap:5px">
+          <img id="vk-user-avatar" style="width:16px;height:16px;border-radius:50%;object-fit:cover" src="" alt="">
+          <span id="vk-user-name" style="font-size:10px;font-family:'Space Grotesk',sans-serif;font-weight:600;color:var(--muted2);max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+          <button onclick="vkLogout()" style="background:none;border:none;color:var(--muted);font-size:10px;cursor:pointer;padding:0" title="Выйти">✕</button>
+        </div>
+        <button id="vk-login-btn" onclick="vkLogin()" class="chat-open-btn" style="color:#7aaed4;border-color:rgba(76,117,163,.4);background:rgba(76,117,163,.1)">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><path d="M13.162 18.994c.609 0 .877-.37.869-.928-.031-1.76.813-2.619 2.016-1.414l.028.025c1.209 1.228 1.459 2.317 2.946 2.317h2.679c.789 0 1.3-.21 1.3-.787 0-.317-.184-.704-.573-1.148-.76-.853-2.02-1.978-2.02-1.978s-.686-.573-.447-.978l.022-.037c.227-.381 1.648-2.019 2.27-2.831.689-.896 1.303-1.894 1.303-2.494 0-.557-.444-.841-1.089-.841h-3.264c-.595 0-.862.311-1.069.77 0 0-.94 2.229-2.154 3.776-.461.567-.742.748-1.02.748-.14 0-.337-.181-.337-.748V7.99c0-.581-.17-.87-.662-.87H9.652c-.37 0-.591.272-.591.529 0 .555.83.684.916 2.244v3.39c0 .738-.133.872-.416.872-.742 0-2.546-2.617-3.621-5.512-.21-.602-.422-.841-1.02-.841H1.854c-.667 0-.8.311-.8.654 0 .614.742 3.656 3.467 7.682C6.487 19.105 9.05 20.5 11.394 20.5c1.372 0 1.768-.308 1.768-.84v-1.666z"/></svg>
+          Войти
+        </button>
+      </div>
+    </div>
+
+    <!-- Экран подключения -->
+    <div class="chat-setup" id="chat-setup">
+      <div class="setup-title">Объединённый чат</div>
+      <div class="setup-steps">
+        <b>1.</b> Установи <a href="https://socialstream.ninja/docs/download.html" target="_blank">Social Stream Ninja</a> в Chrome<br>
+        <b>2.</b> Открой чаты в браузере:<br>
+        &nbsp;&nbsp;— <a href="https://live.vkvideo.ru/fasolka/stream/default/only-chat" target="_blank">VK Video pop-out</a><br>
+        &nbsp;&nbsp;— <a href="https://kick.com/popout/fasollka/chat" target="_blank">Kick pop-out</a><br>
+        <b>3.</b> Включи расширение (иконка зеленеет)<br>
+        <b>4.</b> Нажми иконку расширения → <b>Global settings → Mechanics</b><br>
+        &nbsp;&nbsp;Включи два переключателя:<br>
+        &nbsp;&nbsp;✅ <b>Enable remote API control</b><br>
+        &nbsp;&nbsp;✅ <b>Send chat messages to API server</b><br>
+        <b>5.</b> Session ID — в попапе расширения вверху (длинная строка). Вставь сюда:
+      </div>
+      <input class="setup-inp" id="ssn-inp" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" spellcheck="false" maxlength="64">
+      <div class="setup-row">
+        <button class="setup-btn" id="ssn-connect-btn">Подключить</button>
+      </div>
+      <div class="setup-note">
+        <b>⚠️ Где найти переключатели</b>
+        Нажми иконку SSN в Chrome → внизу попапа «Global settings» → «Mechanics». Там найдёшь оба нужных тоггла. Без них канал 4 пустой и сообщения не придут.
+      </div>
+    </div>
+
+    <!-- Тело чата -->
+    <div class="chat-body" id="chat-body" style="display:none;position:relative">
+      <div class="chat-msgs" id="chat-msgs"></div>
+      <button class="scroll-btn" id="scroll-btn" onclick="scrollToBottom()" title="Вниз">↓</button>
+      <div class="chat-bar">
+        <div class="cbar-dot" id="cbar-dot"></div>
+        <span class="cbar-txt" id="cbar-txt">подключение...</span>
+        <div class="cbar-cnt">
+          <span class="cbar-c vk"  id="cnt-vk">0</span>
+          <span class="cbar-c kick" id="cnt-kick">0</span>
+        </div>
+        <button class="cbar-reset" id="cbar-reset" title="Сменить Session ID">⟳</button>
+      </div>
+      <!-- строка отправки SSN (Kick) -->
+      <div class="send-row">
+        <select class="send-sel" id="send-target" title="Платформа для отправки">
+          <option value="all">→ Все (SSN)</option>
+          <option value="kick">→ Kick</option>
+        </select>
+        <input class="send-inp" id="send-inp" placeholder="Ожидание SSN..." maxlength="500" disabled>
+        <button class="send-btn" id="send-btn" disabled>↑</button>
+      </div>
+      <!-- строка отправки VK (через бэкенд) -->
+      <div class="send-row" id="vk-send-row" style="display:none">
+        <span style="font-size:9px;font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--vk);flex-shrink:0;padding:0 4px">VK</span>
+        <input class="send-inp" id="vk-send-inp" placeholder="Написать в VK чат..." maxlength="500">
+        <button class="send-btn" id="vk-send-btn" style="background:var(--vk)">↑</button>
+      </div>
+      <div id="send-hint" style="font-size:9px;color:var(--muted);padding:2px 8px 3px;font-family:'Space Grotesk',sans-serif;min-height:14px"></div>
+    </div>
+  </div><!-- /chat-panel -->
+
+</div><!-- /body -->
+
+<script>
+/* ══ STREAM SWITCHER ══ */
+const streamMeta={vk:{color:'var(--vk)',label:'VK Video'},kick:{color:'var(--kick)',label:'Kick'}};
+function switchStream(id,btn){
+  document.querySelectorAll('.p-frame').forEach(f=>f.classList.remove('on'));
+  document.getElementById('pf-'+id).classList.add('on');
+  document.querySelectorAll('.stab').forEach(t=>t.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('ppill-dot').style.background=streamMeta[id].color;
+  document.getElementById('ppill-label').textContent=streamMeta[id].label;
+}
+
+/* ══ ФИЛЬТРЫ ══ */
+let activeFilter='all';
+function setFilter(f,btn){
+  activeFilter=f;
+  document.querySelectorAll('.cf').forEach(b=>b.classList.remove('on'));
+  btn.classList.add('on');
+  document.querySelectorAll('.cmsg').forEach(el=>el.classList.toggle('hidden',f!=='all'&&!el.classList.contains('p-'+f)));
+}
+
+/* ══ СКРОЛЛ ══ */
+let userScrolled=false;
+
+function initScroll(){
+  const msgs=document.getElementById('chat-msgs');
+  const btn=document.getElementById('scroll-btn');
+  msgs.addEventListener('scroll',()=>{
+    const atBot=msgs.scrollHeight-msgs.scrollTop-msgs.clientHeight<60;
+    userScrolled=!atBot;
+    btn.classList.toggle('show',userScrolled);
+  },{passive:true});
+}
+
+function scrollToBottom(){
+  const msgs=document.getElementById('chat-msgs');
+  msgs.scrollTop=msgs.scrollHeight;
+  userScrolled=false;
+  document.getElementById('scroll-btn').classList.remove('show');
+}
+
+/* ══ SSN ══ */
+const SSN_WS='wss://io.socialstream.ninja';
+const SSN_HTTP='https://io.socialstream.ninja';
+const SSN_KEY='ssn_session_id';
+
+let ssnWs=null,ssnSession=localStorage.getItem(SSN_KEY)||'';
+let ssnRetry=0,ssnTimer=null,ssnPingTimer=null;
+const seenIds=new Set(),counts={vk:0,kick:0};
+
+const PMAP={'vkplay':'vk','vkvideo':'vk','vk':'vk','kick':'kick'};
+const PCOLOR={vk:'#4c75a3',kick:'#53fc18'};
+const PLABEL={vk:'VK',kick:'Kick'};
+
+function getPlatform(t){
+  if(!t)return null;
+  const s=t.toLowerCase().replace(/[\s\-.]/g,'');
+  if(PMAP[s])return PMAP[s];
+  for(const[k,v]of Object.entries(PMAP))if(s.includes(k.replace(/[\s\-.]/g,'')))return v;
+  return null;
+}
+
+if(ssnSession){document.getElementById('ssn-inp').value=ssnSession;showChatUI();ssnConnect();}
+
+function ssnConnect(){
+  const inp=document.getElementById('ssn-inp');
+  const val=inp.value.trim();
+  if(!val){inp.focus();return;}
+  ssnSession=val;
+  localStorage.setItem(SSN_KEY,ssnSession);
+  clearTimeout(ssnTimer);clearInterval(ssnPingTimer);
+  if(ssnWs){try{ssnWs.close();}catch(e){}ssnWs=null;}
+  showChatUI();setStatus(false,'подключение...');
+
+  ssnWs=new WebSocket(`${SSN_WS}/join/${ssnSession}/4`);
+
+  ssnWs.onopen=()=>{
+    ssnRetry=0;setStatus(true,'SSN · live');updateSendUI();
+    ssnPingTimer=setInterval(()=>{
+      if(ssnWs?.readyState===WebSocket.OPEN)ssnWs.send(JSON.stringify({ping:Date.now()}));
+    },25000);
+  };
+
+  ssnWs.onmessage=(e)=>{
+    let d;try{d=JSON.parse(e.data);}catch{return;}
+    if(d.ping){ssnWs.send(JSON.stringify({pong:d.ping}));return;}
+    if(d.pong||d.action||typeof d.in!=='undefined')return;
+    if(d.chatname||d.chatmessage)renderMsg(d);
+  };
+
+  ssnWs.onclose=()=>{
+    clearInterval(ssnPingTimer);setStatus(false,'переподключение...');updateSendUI();
+    ssnTimer=setTimeout(()=>{if(ssnSession)ssnConnect();},Math.min(2000*Math.pow(1.5,Math.min(ssnRetry,7)),30000));
+    ssnRetry++;
+  };
+  ssnWs.onerror=()=>{};
+}
+
+function renderMsg(data){
+  const name=(data.chatname||'').trim();
+  const rawMsg=data.chatmessage||'';
+  const rawType=data.type||'';
+  const avatar=data.chatimg||null;
+  const donation=data.hasDonation||null;
+  const msgId=data.id||`${rawType}:${name}:${rawMsg}`.slice(0,120);
+
+  if(!name&&!rawMsg.trim())return;
+  if(seenIds.has(msgId))return;
+  seenIds.add(msgId);
+
+  const platform=getPlatform(rawType)||'vk';
+  const color=PCOLOR[platform],label=PLABEL[platform];
+
+  counts[platform]=(counts[platform]||0)+1;
+  const cEl=document.getElementById('cnt-'+platform);
+  if(cEl)cEl.textContent=counts[platform]>999?(counts[platform]/1000).toFixed(1)+'k':counts[platform];
+
+  const msgs=document.getElementById('chat-msgs');
+  const atBot=!userScrolled&&(msgs.scrollHeight-msgs.scrollTop-msgs.clientHeight<80);
+
+  const avHTML=avatar?`<img src="${escAttr(avatar)}" alt="" onerror="this.style.display='none'">`:esc((name.charAt(0)||'?').toUpperCase());
+  const hasHTML=/<[a-z]/i.test(rawMsg);
+  const textHTML=hasHTML?sanitizeHTML(rawMsg):esc(rawMsg);
+
+  const el=document.createElement('div');
+  el.className=`cmsg p-${platform}${activeFilter!=='all'&&activeFilter!==platform?' hidden':''}`;
+  el.innerHTML=`<div class="cavatar" style="background:${color}22;color:${color}">${avHTML}</div><div class="cbody"><div class="cmeta"><span class="cname" style="color:${color}">${esc(name)}</span><span class="cbadge">${label}</span></div><div class="ctext">${textHTML}</div>${donation?`<div class="cdonation">💰 ${esc(String(donation))}</div>`:''}</div>`;
+
+  msgs.appendChild(el);
+  while(msgs.childElementCount>500)msgs.removeChild(msgs.firstElementChild);
+  if(atBot)msgs.scrollTop=msgs.scrollHeight;
+}
+
+function sanitizeHTML(html){
+  const tmp=document.createElement('div');tmp.innerHTML=html;
+  tmp.querySelectorAll('script,style,a,iframe,object,embed,form').forEach(el=>el.remove());
+  tmp.querySelectorAll('img').forEach(img=>{
+    img.style.cssText='width:16px;height:16px;vertical-align:middle;margin:0 1px';
+    Array.from(img.attributes).forEach(a=>{if(!['src','alt','title','style','width','height'].includes(a.name))img.removeAttribute(a.name);});
+  });
+  return tmp.innerHTML;
+}
+
+/* ══ ОТПРАВКА ══
+   sendChat через HTTP GET — самый надёжный способ.
+   SSN расширение слушает HTTP запросы на io.socialstream.ninja
+   и пересылает сообщение в открытые чаты.
+   Ответ "failed" = расширение не запущено, "ok" = успешно.
+*/
+function updateSendUI(){
+  const ok=ssnWs?.readyState===WebSocket.OPEN;
+  const inp=document.getElementById('send-inp'),btn=document.getElementById('send-btn'),hint=document.getElementById('send-hint');
+  if(inp){inp.disabled=!ok;inp.placeholder=ok?'Написать в чат...':'Ожидание подключения SSN...';}
+  if(btn)btn.disabled=!ok;
+  if(hint&&ok)hint.textContent='Enter · SSN отправит в открытые платформы';
+  if(hint&&!ok)hint.textContent='';
+}
+
+async function sendMsg(){
+  const inp=document.getElementById('send-inp');
+  const text=(inp?.value||'').trim();
+  if(!text||!ssnSession||ssnWs?.readyState!==WebSocket.OPEN)return;
+
+  inp.value='';inp.focus();
+
+  // HTTP GET — надёжно, SSN расширение обрабатывает его напрямую
+  // Нет задержки от ожидания ответа — fire and forget
+  const encoded=encodeURIComponent(text);
+  const sel=document.getElementById('send-target').value;
+  const target=sel==='all'?'null':(sel==='vk'?'vkplay':sel);
+  const url=`${SSN_HTTP}/${ssnSession}/sendChat/${target}/${encoded}`;
+
+  fetch(url).then(r=>r.text()).then(t=>{
+    if(t==='failed'){
+      const hint=document.getElementById('send-hint');
+      if(hint){hint.textContent='⚠ SSN: расширение не подключено к API';hint.style.color='#f87171';setTimeout(()=>{hint.style.color='';updateSendUI();},3000);}
+    }
+  }).catch(()=>{});
+}
+
+/* ══ VK PLAYER ══ */
+setTimeout(()=>{
+  try{
+    const doc=document.getElementById('pf-vk').contentDocument;
+    if(doc&&doc.body&&doc.body.children.length===0)vkPlayerFallback();
+  }catch(e){}// SecurityError = crossorigin = работает нормально
+},3000);
+function vkPlayerFallback(){
+  document.getElementById('pf-vk').style.display='none';
+  const fb=document.getElementById('vk-player-fb');if(fb)fb.style.display='flex';
+}
+
+/* ══ UI ══ */
+function showChatUI(){document.getElementById('chat-setup').style.display='none';document.getElementById('chat-body').style.display='flex';}
+function setStatus(live,txt){
+  const dot=document.getElementById('cbar-dot'),lbl=document.getElementById('cbar-txt');
+  if(dot)dot.className='cbar-dot'+(live?' live':'');if(lbl)lbl.textContent=txt;
+}
+function ssnReset(){
+  ssnSession='';localStorage.removeItem(SSN_KEY);
+  clearTimeout(ssnTimer);clearInterval(ssnPingTimer);
+  if(ssnWs){try{ssnWs.close();}catch(e){}ssnWs=null;}
+  document.getElementById('chat-setup').style.display='flex';
+  document.getElementById('chat-body').style.display='none';
+  document.getElementById('chat-msgs').innerHTML='';
+  document.getElementById('ssn-inp').value='';
+  seenIds.clear();
+  ['vk','kick'].forEach(p=>{counts[p]=0;const el=document.getElementById('cnt-'+p);if(el)el.textContent='0';});
+  updateSendUI();
+}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function escAttr(s){return String(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+document.addEventListener('DOMContentLoaded',()=>{
+  initScroll();
+  document.getElementById('ssn-connect-btn').addEventListener('click',ssnConnect);
+  document.getElementById('ssn-inp').addEventListener('keydown',e=>{if(e.key==='Enter')ssnConnect();});
+  document.getElementById('cbar-reset').addEventListener('click',ssnReset);
+  document.getElementById('send-inp')?.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});
+  document.getElementById('send-btn')?.addEventListener('click',sendMsg);
+  document.getElementById('vk-send-inp')?.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();vkSendMsg();}});
+  document.getElementById('vk-send-btn')?.addEventListener('click',vkSendMsg);
+});
+
+/* ══ VK БЭКЕНД — авторизация и чат ══
+   !! Замени на свой Railway URL после деплоя !!
+*/
+const VK_BACKEND = 'https://fasolka-backend-production.up.railway.app';
+const VK_WS_URL  = VK_BACKEND.replace('https://','wss://').replace('http://','ws://')+'/ws';
+
+let vkBackendWs  = null;
+let vkSession    = localStorage.getItem('vk_session') || null;
+let vkWsRetry    = 0;
+let vkWsTimer    = null;
+
+// Если бэкенд не настроен — скрываем кнопку входа
+if(VK_BACKEND.includes('ТВОЙ-СЕРВЕР')){
+  document.getElementById('vk-auth-area').style.display='none';
+} else {
+  vkBackendInit();
+}
+
+async function vkBackendInit(){
+  // Проверяем сессию из URL (после OAuth редиректа)
+  const params=new URLSearchParams(location.search);
+  const sessionFromUrl=params.get('session');
+  if(sessionFromUrl){
+    vkSession=sessionFromUrl;
+    localStorage.setItem('vk_session',vkSession);
+    history.replaceState({},'',location.pathname);
+  }
+  if(params.get('auth')==='error'){
+    history.replaceState({},'',location.pathname);
+  }
+
+  if(vkSession) await vkLoadProfile();
+  vkBackendConnect();
+}
+
+function vkBackendConnect(){
+  if(vkBackendWs){try{vkBackendWs.close();}catch(e){}vkBackendWs=null;}
+  clearTimeout(vkWsTimer);
+
+  vkBackendWs=new WebSocket(VK_WS_URL);
+
+  vkBackendWs.onopen=()=>{
+    vkWsRetry=0;
+    // Статус уже обновляется через сообщения от сервера
+  };
+
+  vkBackendWs.onmessage=(e)=>{
+    let d;try{d=JSON.parse(e.data);}catch{return;}
+    if(d.type==='MESSAGE'&&d.message) renderVkMsg(d.message);
+    if(d.type==='HISTORY'&&Array.isArray(d.messages)) d.messages.forEach(renderVkMsg);
+  };
+
+  vkBackendWs.onclose=()=>{
+    const delay=Math.min(2000*Math.pow(1.5,Math.min(vkWsRetry,7)),30000);
+    vkWsTimer=setTimeout(vkBackendConnect,delay);
+    vkWsRetry++;
+  };
+  vkBackendWs.onerror=()=>{};
+}
+
+function renderVkMsg(msg){
+  // Рендерим как обычное VK сообщение через существующую систему
+  renderMsg({
+    chatname:    msg.name||'',
+    chatmessage: msg.text||'',
+    type:        'vkplay',
+    chatimg:     msg.avatar||null,
+    id:          msg.id||null,
+  });
+}
+
+/* VK OAuth */
+function vkLogin(){
+  window.location.href=VK_BACKEND+'/auth/login';
+}
+
+async function vkLogout(){
+  if(vkSession){
+    fetch(VK_BACKEND+'/auth/logout',{method:'POST',headers:{'x-session-id':vkSession}}).catch(()=>{});
+  }
+  vkSession=null;
+  localStorage.removeItem('vk_session');
+  document.getElementById('vk-user-info').style.display='none';
+  document.getElementById('vk-login-btn').style.display='';
+  document.getElementById('vk-send-row').style.display='none';
+}
+
+async function vkLoadProfile(){
+  try{
+    const r=await fetch(VK_BACKEND+'/auth/me',{headers:{'x-session-id':vkSession}});
+    if(!r.ok){vkSession=null;localStorage.removeItem('vk_session');return;}
+    const p=await r.json();
+
+    // Показываем имя и аватар
+    const info=document.getElementById('vk-user-info');
+    info.style.display='flex';
+    document.getElementById('vk-login-btn').style.display='none';
+    document.getElementById('vk-user-name').textContent=p.displayName||'';
+    const av=document.getElementById('vk-user-avatar');
+    if(p.avatarUrl){av.src=p.avatarUrl;av.style.display='';}
+    else av.style.display='none';
+
+    // Показываем поле отправки VK
+    document.getElementById('vk-send-row').style.display='flex';
+  }catch(e){
+    vkSession=null;localStorage.removeItem('vk_session');
+  }
+}
+
+/* Отправка в VK через бэкенд */
+async function vkSendMsg(){
+  const inp=document.getElementById('vk-send-inp');
+  const text=(inp?.value||'').trim();
+  if(!text||!vkSession) return;
+  inp.value='';inp.focus();
+
+  try{
+    const r=await fetch(VK_BACKEND+'/chat/send',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-session-id':vkSession},
+      body:JSON.stringify({text}),
+    });
+    if(r.status===401){
+      vkLogout();
+      const hint=document.getElementById('send-hint');
+      if(hint){hint.textContent='⚠ VK: сессия истекла, войдите заново';hint.style.color='#f87171';setTimeout(()=>{hint.textContent='';hint.style.color='';},3000);}
+    }
+  }catch(e){}
+}
+
+/* ══ ГОРИЗОНТАЛЬНЫЙ СПЛИТТЕР ══
+   Меняем grid-template-columns через CSS custom property --chat-w
+   Это намного плавнее чем менять width/flex — браузер пересчитывает
+   только grid layout, без reflow дочерних элементов.
+   will-change:grid-template-columns подсказывает браузеру заранее.
+*/
+(function(){
+  const body   = document.getElementById('body');
+  const drag   = document.getElementById('v-drag');
+  const DRAG_W = 6;   // ширина сплиттера
+  const MIN_CHAT = 220;
+  const MIN_PLAYER = 300;
+
+  // Начальная ширина чата
+  let chatW = Math.min(360, Math.max(MIN_CHAT, Math.round(window.innerWidth * 0.28)));
+  applyWidth(chatW);
+
+  let active=false, startX=0, startChatW=0, totalW=0, lastX=0, raf=null;
+
+  function applyWidth(w){
+    chatW = Math.max(MIN_CHAT, Math.min(window.innerWidth - MIN_PLAYER - DRAG_W, w));
+    // Один DOM write — через grid-template-columns
+    body.style.gridTemplateColumns = `1fr ${DRAG_W}px ${chatW}px`;
+  }
+
+  function onStart(x){
+    active    = true;
+    startX    = x;
+    startChatW= chatW;
+    totalW    = body.offsetWidth;
+    drag.classList.add('dragging');
+    document.body.style.cursor     = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function onMove(x){
+    if(!active) return;
+    lastX = x;
+    if(raf) return;
+    raf = requestAnimationFrame(()=>{
+      raf = null;
+      // Чат растёт влево когда тащим drag влево → delta отрицательный → chatW растёт
+      applyWidth(startChatW - (lastX - startX));
+    });
+  }
+
+  function onEnd(){
+    if(!active) return;
+    active = false;
+    drag.classList.remove('dragging');
+    document.body.style.cursor     = '';
+    document.body.style.userSelect = '';
+  }
+
+  drag.addEventListener('mousedown', e=>{ onStart(e.clientX); e.preventDefault(); });
+  document.addEventListener('mousemove', e=>{ onMove(e.clientX); }, {passive:true});
+  document.addEventListener('mouseup', onEnd);
+
+  drag.addEventListener('touchstart', e=>{ onStart(e.touches[0].clientX); e.preventDefault(); }, {passive:false});
+  document.addEventListener('touchmove', e=>{ if(active) onMove(e.touches[0].clientX); }, {passive:true});
+  document.addEventListener('touchend',   onEnd);
+  document.addEventListener('touchcancel',onEnd);
+
+  // При ресайзе окна — не даём чату стать слишком большим
+  window.addEventListener('resize', ()=>{ applyWidth(chatW); }, {passive:true});
+})();
+</script>
+</body>
+</html>
