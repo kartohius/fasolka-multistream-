@@ -407,6 +407,88 @@ async function vkSend(){
 }
 
 // VK статусбар
+function removePlaceholder(){
+  const ph=document.getElementById('vk-placeholder');
+  if(ph) ph.remove();
+}
+
+function vkRenderMsg(msg){
+  if(!msg) return;
+  // Поддерживаем два формата: объект от бэкенда {id,name,text,avatar,smiles,isOwner}
+  // и сырой объект от Centrifugo {author:{...}, data:[...]}
+  let id, name, text, avatar, isOwner, smiles=[];
+
+  if(msg.name && msg.text){
+    // Формат от бэкенда
+    id=msg.id; name=msg.name; text=msg.text; avatar=msg.avatar;
+    isOwner=msg.isOwner; smiles=msg.smiles||[];
+  } else {
+    // Сырой Centrifugo формат
+    const author = msg.author || msg.user || {};
+    name   = author.displayName || author.nick || author.name || 'Аноним';
+    avatar = author.avatarUrl   || author.avatar || null;
+    isOwner= !!(author.isBroadcaster);
+    id     = msg.id || `${name}:${Date.now()}`;
+
+    const parts = msg.data || msg.parts || [];
+    if(Array.isArray(parts) && parts.length){
+      parts.forEach(p=>{
+        if(p.type==='text') text=(text||'')+(p.content?.[0]??p.text??'');
+        else if(p.type==='smile'){ text=(text||'')+`:${p.name}:`; smiles.push({name:p.name,url:p.smallUrl||p.url}); }
+        else if(p.type==='mention') text=(text||'')+`@${p.displayName||p.nick||''}`;
+      });
+    } else {
+      text = String(msg.text||msg.content||msg.message||'');
+    }
+    text=(text||'').trim();
+  }
+
+  if(!text) return;
+  if(vkSeenIds.has(id)) return;
+  vkSeenIds.add(id);
+
+  removePlaceholder();
+
+  const msgs=document.getElementById('vk-msgs');
+  if(!msgs) return;
+  const atBot=!vkScrolled&&(msgs.scrollHeight-msgs.scrollTop-msgs.clientHeight<80);
+
+  let textHTML=vkEsc(text);
+  (smiles||[]).forEach(s=>{
+    if(s.name&&s.url) textHTML=textHTML.replace(
+      new RegExp(':'+s.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+':','g'),
+      `<img src="${vkEscAttr(s.url)}" title="${vkEscAttr(s.name)}" style="width:16px;height:16px;vertical-align:middle">`
+    );
+  });
+
+  const avHTML=avatar
+    ?`<img src="${vkEscAttr(avatar)}" alt="" onerror="this.style.display='none'">`
+    :vkEsc((name||'?').charAt(0).toUpperCase());
+
+  const el=document.createElement('div');
+  el.className='vmsg';
+  el.innerHTML=`
+    <div class="vavatar">${avHTML}</div>
+    <div class="vbody">
+      <div class="vname${isOwner?' owner':''}">${vkEsc(name)}</div>
+      <div class="vtext">${textHTML}</div>
+    </div>`;
+  msgs.appendChild(el);
+  while(msgs.childElementCount>300) msgs.removeChild(msgs.firstElementChild);
+  if(atBot) msgs.scrollTop=msgs.scrollHeight;
+}
+
+function vkScrollToBottom(){
+  const msgs=document.getElementById('vk-msgs');
+  if(!msgs) return;
+  msgs.scrollTop=msgs.scrollHeight;
+  vkScrolled=false;
+  document.getElementById('vk-scroll-btn')?.classList.remove('show');
+}
+
+function vkEsc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function vkEscAttr(s){return String(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
 function setVkStatus(live,txt){
   const dot=document.getElementById('vk-bar-dot');
   const lbl=document.getElementById('vk-bar-txt');
