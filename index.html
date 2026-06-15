@@ -297,7 +297,10 @@ function backendConnect(){
       chatChannel = d.chatChannel;
       if(d.isOnline){
         setVkStatus(false, 'подключаем чат...');
-        centrifugoConnect(d.chatChannel);
+        // Получаем токен через бэкенд и подключаемся к Centrifugo
+        getCentrifugoToken().then(({token, channel})=>{
+          centrifugoConnect(channel || d.chatChannel, token);
+        });
       } else {
         setVkStatus(false, 'стрим офлайн · чат недоступен');
       }
@@ -316,8 +319,24 @@ function backendConnect(){
   backendWs.onerror = () => {};
 }
 
+/* ── Получаем токен Centrifugo через бэкенд ── */
+async function getCentrifugoToken(){
+  try{
+    const headers = {};
+    if(vkSession) headers['x-session-id'] = vkSession;
+    const r = await fetch(VK_BACKEND+'/centrifugo/token', { headers });
+    if(!r.ok) return { token: null, channel: chatChannel };
+    const d = await r.json();
+    console.log('[VK] Centrifugo token:', d.token ? 'got token' : 'no token', 'channel:', d.channel);
+    return { token: d.token, channel: d.channel };
+  }catch(e){
+    console.warn('[VK] getCentrifugoToken error:', e.message);
+    return { token: null, channel: chatChannel };
+  }
+}
+
 /* ── Centrifugo — прямое подключение из браузера ── */
-function centrifugoConnect(channel){
+function centrifugoConnect(channel, wsToken){
   if(centrifugoWs){ try{centrifugoWs.close();}catch(e){} centrifugoWs=null; }
 
   // Браузер подключается напрямую — тот же домен что и VK сайт
@@ -327,8 +346,12 @@ function centrifugoConnect(channel){
   centrifugoId = 1;
 
   centrifugoWs.onopen = () => {
-    // Подключаемся без токена (анонимно — только чтение публичного чата)
-    centrifugoWs.send(JSON.stringify({ connect: {}, id: centrifugoId++ }));
+    // Подключаемся с токеном если есть, иначе анонимно
+    const connectMsg = { id: centrifugoId++ };
+    if(wsToken) connectMsg.connect = { token: wsToken };
+    else connectMsg.connect = {};
+    console.log('[VK] Centrifugo connect, token:', !!wsToken);
+    centrifugoWs.send(JSON.stringify(connectMsg));
   };
 
   centrifugoWs.onmessage = (e) => {
@@ -358,9 +381,15 @@ function centrifugoConnect(channel){
   };
 
   centrifugoWs.onclose = (ev) => {
+    console.log('[VK] Centrifugo closed:', ev.code, ev.reason);
     setVkStatus(false, 'переподключение...');
-    setTimeout(() => { if(chatChannel) centrifugoConnect(chatChannel); }, 
-      Math.min(2000*Math.pow(1.5, Math.min(vkWsRetry++,7)), 30000));
+    setTimeout(() => {
+      if(chatChannel){
+        getCentrifugoToken().then(({token, channel})=>{
+          centrifugoConnect(channel||chatChannel, token);
+        });
+      }
+    }, Math.min(2000*Math.pow(1.5, Math.min(vkWsRetry++,7)), 30000));
   };
   centrifugoWs.onerror = () => {};
 }
