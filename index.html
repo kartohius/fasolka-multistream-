@@ -232,8 +232,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter'
 
 <script>
 /* ══ BACKEND URL ══ */
-const VK_BACKEND = 'https://fasolka-backend-production.up.railway.app';
-const VK_WS_URL  = VK_BACKEND.replace('https://','wss://')+'/ws';
+const VK_BACKEND = 'http://186.246.31.222:3000';
+const VK_WS_URL  = 'ws://186.246.31.222:3000/ws';
 
 /* ══ STREAM SWITCHER ══ */
 const streamMeta={vk:{color:'var(--vk)',label:'VK Video'},kick:{color:'var(--kick)',label:'Kick'}};
@@ -339,19 +339,18 @@ async function getCentrifugoToken(){
 function centrifugoConnect(channel, wsToken){
   if(centrifugoWs){ try{centrifugoWs.close();}catch(e){} centrifugoWs=null; }
 
-  // Браузер подключается напрямую — тот же домен что и VK сайт
-  centrifugoWs = new WebSocket(
-    'wss://centrifugo.live.vkvideo.ru/connection/websocket?cf_protocol_version=v2'
-  );
+  // Передаём токен прямо в URL — единственный способ из браузера
+  const wsUrl = wsToken
+    ? `wss://centrifugo.live.vkvideo.ru/connection/websocket?cf_protocol_version=v2&token=${encodeURIComponent(wsToken)}`
+    : `wss://centrifugo.live.vkvideo.ru/connection/websocket?cf_protocol_version=v2`;
+
+  console.log('[VK] Centrifugo connecting, token in URL:', !!wsToken);
+  centrifugoWs = new WebSocket(wsUrl);
   centrifugoId = 1;
 
   centrifugoWs.onopen = () => {
-    // Подключаемся с токеном если есть, иначе анонимно
-    const connectMsg = { id: centrifugoId++ };
-    if(wsToken) connectMsg.connect = { token: wsToken };
-    else connectMsg.connect = {};
-    console.log('[VK] Centrifugo connect, token:', !!wsToken);
-    centrifugoWs.send(JSON.stringify(connectMsg));
+    // Отправляем connect без токена — он уже в URL
+    centrifugoWs.send(JSON.stringify({ connect: {}, id: centrifugoId++ }));
   };
 
   centrifugoWs.onmessage = (e) => {
