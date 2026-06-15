@@ -335,23 +335,44 @@ async function getCentrifugoToken(){
   }
 }
 
-/* ── Centrifugo — прямое подключение из браузера ── */
+/* ── Расширение VK Chat Bridge ── */
 function centrifugoConnect(channel, wsToken){
-  if(centrifugoWs){ try{centrifugoWs.close();}catch(e){} centrifugoWs=null; }
+  // Centrifugo заблокирован VK для внешних подключений.
+  // Используем расширение Chrome которое читает чат изнутри VK страницы.
+  setVkStatus(false, '🔌 нужно расширение VK Chat Bridge');
+  // Показываем инструкцию
+  const ph = document.getElementById('vk-placeholder');
+  if(ph){
+    ph.style.display='flex';
+    ph.innerHTML=`<div style="font-size:11px;color:var(--muted2);text-align:center;padding:16px;line-height:1.7">
+      <div style="font-size:24px;margin-bottom:8px">🔌</div>
+      <div style="font-weight:700;color:var(--text);margin-bottom:6px">Нужно расширение</div>
+      Установи <b>VK Chat Bridge</b> в Chrome<br>и нажми «Запустить»<br>
+      <div style="margin-top:10px;font-size:10px;color:var(--muted)">
+        Расширение читает чат VK<br>изнутри браузера
+      </div>
+    </div>`;
+    ph.style.cssText+='display:flex;position:absolute;inset:0;background:var(--surf2);flex-direction:column;align-items:center;justify-content:center;z-index:5';
+  }
+  const msgs = document.getElementById('vk-msgs');
+  if(msgs) msgs.style.display='none';
+}
 
-  // Передаём токен прямо в URL — единственный способ из браузера
-  const wsUrl = wsToken
-    ? `wss://centrifugo.live.vkvideo.ru/connection/websocket?cf_protocol_version=v2&token=${encodeURIComponent(wsToken)}`
-    : `wss://centrifugo.live.vkvideo.ru/connection/websocket?cf_protocol_version=v2`;
+// Слушаем сообщения от расширения
+window.addEventListener('vk-chat-messages', (e) => {
+  if(!e.detail?.messages) return;
+  const ph = document.getElementById('vk-placeholder');
+  if(ph) ph.style.display='none';
+  const msgs = document.getElementById('vk-msgs');
+  if(msgs) msgs.style.display='flex';
+  setVkStatus(true, '🔌 расширение · live');
+  e.detail.messages.forEach(m => vkRenderMsg({
+    id: m.id, name: m.name, text: m.text,
+    avatar: m.avatar, smiles: m.smiles||[], isOwner: false
+  }));
+});
 
-  console.log('[VK] Centrifugo connecting, token in URL:', !!wsToken);
-  centrifugoWs = new WebSocket(wsUrl);
-  centrifugoId = 1;
-
-  centrifugoWs.onopen = () => {
-    // Отправляем connect без токена — он уже в URL
-    centrifugoWs.send(JSON.stringify({ connect: {}, id: centrifugoId++ }));
-  };
+function centrifugoConnectDummy(channel, wsToken){
 
   centrifugoWs.onmessage = (e) => {
     let msg; try{ msg=JSON.parse(e.data); }catch{ return; }
