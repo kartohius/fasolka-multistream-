@@ -247,107 +247,122 @@ function switchStream(id,btn){
 }
 
 /* ══ VK ЧАТ ЧЕРЕЗ БЭКЕНД ══ */
-let vkWs=null, vkSession=localStorage.getItem('vk_session')||null;
-let vkWsRetry=0, vkWsTimer=null, vkSeenIds=new Set(), vkScrolled=false;
+let vkSession    = localStorage.getItem('vk_session') || null;
+let vkWsRetry    = 0;
+let vkWsTimer    = null;
+let vkSeenIds    = new Set();
+let vkScrolled   = false;
+
+// Соединение с нашим бэкендом Railway
+let backendWs = null;
+let backendRetry = 0;
+
+// Centrifugo — прямое подключение из браузера к VK
+let centrifugoWs  = null;
+let centrifugoId  = 1;
+let chatChannel   = null;
 
 // Проверяем сессию из URL после OAuth
 (function(){
-  const p=new URLSearchParams(location.search);
-  const s=p.get('session');
-  if(s){vkSession=s;localStorage.setItem('vk_session',s);}
-  if(p.get('auth')==='error'){showVkError('Ошибка авторизации VK');}
+  const p = new URLSearchParams(location.search);
+  const s = p.get('session');
+  if(s){ vkSession=s; localStorage.setItem('vk_session',s); }
+  if(p.get('auth')==='error') console.warn('OAuth error');
   if(s||p.has('auth')) history.replaceState({},'',location.pathname);
 })();
 
-// Инициализация
 if(vkSession) vkLoadProfile();
-vkWsConnect();
+backendConnect();
 
-// VK WebSocket
-function vkWsConnect(){
-  clearTimeout(vkWsTimer);
-  if(vkWs){try{vkWs.close();}catch(e){}vkWs=null;}
-  setVkStatus(false,'подключение...');
+/* ── Подключение к бэкенду (получаем chatChannel) ── */
+function backendConnect(){
+  if(backendWs){ try{backendWs.close();}catch(e){} backendWs=null; }
 
-  vkWs=new WebSocket(VK_WS_URL);
+  backendWs = new WebSocket(VK_WS_URL);
 
-  vkWs.onopen=()=>{
-    vkWsRetry=0;
-    setVkStatus(true,'live · реальное время');
-    removePlaceholder();
+  backendWs.onopen = () => {
+    backendRetry = 0;
+    setVkStatus(false, 'получаем данные стрима...');
   };
 
-  vkWs.onmessage=(e)=>{
-    let d;try{d=JSON.parse(e.data);}catch{return;}
-    if(d.type==='STATUS'){
-      if(d.status==='connected') setVkStatus(true,'live · реальное время');
-      else if(d.status==='reconnecting') setVkStatus(false,'переподключение к VK...');
-      else if(d.status==='offline') setVkStatus(false,'стрим офлайн · чат недоступен');
-      else if(d.status==='error') setVkStatus(false,'ошибка: '+(d.message||''));
+  backendWs.onmessage = (e) => {
+    let d; try{ d=JSON.parse(e.data); }catch{ return; }
+
+    if(d.type === 'STATUS'){
+      if(d.status === 'offline') setVkStatus(false, 'стрим офлайн');
+      else if(d.status === 'error') setVkStatus(false, 'ошибка: '+(d.message||''));
     }
-    if(d.type==='HISTORY'&&Array.isArray(d.messages)) d.messages.forEach(vkRenderMsg);
-    if(d.type==='MESSAGE'&&d.message) vkRenderMsg(d.message);
-  };
 
-  vkWs.onclose=()=>{
-    setVkStatus(false,'переподключение...');
-    const delay=Math.min(2000*Math.pow(1.5,Math.min(vkWsRetry,7)),30000);
-    vkWsTimer=setTimeout(vkWsConnect,delay);
-    vkWsRetry++;
-  };
-  vkWs.onerror=()=>{};
-}
-
-// Рендер сообщения VK
-function vkRenderMsg(msg){
-  if(!msg||!msg.id) return;
-  if(vkSeenIds.has(msg.id)) return;
-  vkSeenIds.add(msg.id);
-
-  removePlaceholder();
-
-  const msgs=document.getElementById('vk-msgs');
-  const atBot=!vkScrolled&&(msgs.scrollHeight-msgs.scrollTop-msgs.clientHeight<80);
-
-  const avHTML=msg.avatar
-    ?`<img src="${escAttr(msg.avatar)}" alt="" onerror="this.style.display='none'">`
-    :esc((msg.name||'?').charAt(0).toUpperCase());
-
-  // Собираем HTML: смайлы уже обработаны на сервере
-  let textHTML=esc(msg.text||'');
-  (msg.smiles||[]).forEach(s=>{
-    if(s.name&&s.url){
-      textHTML=textHTML.replace(
-        new RegExp(':'+s.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+':','g'),
-        `<img src="${escAttr(s.url)}" title="${escAttr(s.name)}">`
-      );
+    if(d.type === 'STREAM_DATA'){
+      chatChannel = d.chatChannel;
+      if(d.isOnline){
+        setVkStatus(false, 'подключаем чат...');
+        centrifugoConnect(d.chatChannel);
+      } else {
+        setVkStatus(false, 'стрим офлайн · чат недоступен');
+      }
     }
-  });
 
-  const el=document.createElement('div');
-  el.className='vmsg';
-  el.innerHTML=`
-    <div class="vavatar">${avHTML}</div>
-    <div class="vbody">
-      <div class="vname${msg.isOwner?' owner':''}">${esc(msg.name||'Аноним')}</div>
-      <div class="vtext">${textHTML}</div>
-    </div>`;
-  msgs.appendChild(el);
-  while(msgs.childElementCount>300) msgs.removeChild(msgs.firstElementChild);
-  if(atBot) msgs.scrollTop=msgs.scrollHeight;
+    // Сообщения отправленные через бэкенд (от других авторизованных пользователей)
+    if(d.type === 'MESSAGE' && d.message) vkRenderMsg(d.message);
+    if(d.type === 'HISTORY' && Array.isArray(d.messages)) d.messages.forEach(vkRenderMsg);
+  };
+
+  backendWs.onclose = () => {
+    const delay = Math.min(2000*Math.pow(1.5, Math.min(backendRetry,7)), 30000);
+    setTimeout(backendConnect, delay);
+    backendRetry++;
+  };
+  backendWs.onerror = () => {};
 }
 
-function removePlaceholder(){
-  const ph=document.getElementById('vk-placeholder');
-  if(ph) ph.remove();
-}
+/* ── Centrifugo — прямое подключение из браузера ── */
+function centrifugoConnect(channel){
+  if(centrifugoWs){ try{centrifugoWs.close();}catch(e){} centrifugoWs=null; }
 
-// Скролл VK
-function vkScrollToBottom(){
-  const msgs=document.getElementById('vk-msgs');
-  msgs.scrollTop=msgs.scrollHeight;
-  vkScrolled=false;
-  document.getElementById('vk-scroll-btn').classList.remove('show');
+  // Браузер подключается напрямую — тот же домен что и VK сайт
+  centrifugoWs = new WebSocket(
+    'wss://centrifugo.live.vkvideo.ru/connection/websocket?cf_protocol_version=v2'
+  );
+  centrifugoId = 1;
+
+  centrifugoWs.onopen = () => {
+    // Подключаемся без токена (анонимно — только чтение публичного чата)
+    centrifugoWs.send(JSON.stringify({ connect: {}, id: centrifugoId++ }));
+  };
+
+  centrifugoWs.onmessage = (e) => {
+    let msg; try{ msg=JSON.parse(e.data); }catch{ return; }
+
+    // Ответ на connect → подписываемся на канал чата
+    if(msg.id === 1 && msg.connect !== undefined){
+      centrifugoWs.send(JSON.stringify({ subscribe: { channel }, id: centrifugoId++ }));
+      setVkStatus(true, 'live · реальное время');
+      removePlaceholder();
+      return;
+    }
+
+    // Ответ на subscribe → история сообщений
+    if(msg.id === 2 && msg.subscribe !== undefined){
+      const pubs = msg.subscribe?.publications || [];
+      pubs.forEach(p => { if(p?.data) vkRenderMsg(p.data); });
+      return;
+    }
+
+    // Push — новое сообщение чата
+    if(msg.push){
+      const pub = msg.push?.pub;
+      if(pub?.data) vkRenderMsg(pub.data);
+      return;
+    }
+  };
+
+  centrifugoWs.onclose = (ev) => {
+    setVkStatus(false, 'переподключение...');
+    setTimeout(() => { if(chatChannel) centrifugoConnect(chatChannel); }, 
+      Math.min(2000*Math.pow(1.5, Math.min(vkWsRetry++,7)), 30000));
+  };
+  centrifugoWs.onerror = () => {};
 }
 
 // VK OAuth
